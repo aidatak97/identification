@@ -13,16 +13,16 @@ def check_msm_identification(
     msm_res,
     moments_cov,
     draws,
-    n_obs,
     weights="diagonal",
-    kernel="uniform",
+    kernel="uniform",  # not implemented other kerenels
     sampling="sobol",
+    n_obs=None,
     bandwidth=None,
     cutoff=None,
-    population_mc_kwgs=None,
     simulate_moments_kwargs=None,
-    logging=False,
-    log_options=None,
+    population_mc_kwgs=None,  # not implemented
+    logging=False,  # not implemented
+    log_options=None,  # not implemented
 ):
     """Detection of the identification failure in moment condition models.
     Performs the identification check as described in Forneron, J. J. (2019).
@@ -38,29 +38,31 @@ def check_msm_identification(
             simulated moments.  If the function returns a dict containing the key
             "simulated_moments" we only use the value corresponding to that key. Other
             entries are stored in the log database if you use logging.
-        simulate_moments_kwargs (dict) – Additional keyword arguments for simulate_moments
-            with, for example, data on dependent and independent variables from the model
-            specification.
         msm_res (dict) – The output of ``estimate_msm`` including estimated
-        parameters and standard errors.
+            parameters and standard errors.
+        moments_cov (pandas.DataFrame): A block-pytree containing the covariance
+            matrix of the empirical moments. This is typically calculated with
+            our ``get_moments_cov`` function.
+        draws (float)  - The number of draws for sampling on level sets. Supposed to be
+            sufficiently large.
         weights (str) – One of “diagonal” (default), “identity” or “optimal”.  Note that
             “optimal” refers to the asymptotically optimal weighting matrix and is often
             not a good choice due to large finite sample bias.
-        bandwidth (float) - By default is calculated in the form of sqrt(2log(log[n])/n).
-            Required for the selection of subsets for levels sets.
         kernel (callable) - By default  is the uniform kernel K(U) which is indicator
             function for |U|<=1. Required for the calculation of quasi-jacobian matrix.
-        cutoff (float) - By default is calculated in the form sqrt(2log[n]/n). Required
-            for identification category selection.
-        draws (float)  - The number of draws for sampling on level sets. Supposed to be
-            sufficiently large.
-        n_obs (int): Number of observations. Required for calculation of bandwidth and cutoff.
         sampling (str) - Methods of sampling uniformly from likelihood level sets. One of
             the available options for direct approach using "sobol" or "halton" sequence
             or adaptive sampling by "population_mc".
+        n_obs (int): Number of observations. Required for default calculation of
+            bandwidth and cutoff.
+        bandwidth (float) - By default is calculated in the form of sqrt(2log(log[n])/n).
+            Required for the selection of subsets for levels sets.
+        cutoff (float) - By default is calculated in the form sqrt(2log[n]/n). Required
+            for identification category selection.
+        simulate_moments_kwargs (dict) – Additional keyword arguments for simulate_moments
+            with, for example, data on dependent and independent variables from the model
+            specification.
         population_mc_kwgs (dict): Further tuning parameters for adaptive sampling.
-        significance (float) - The significance level with default level 5%.
-        H0 (dict) - Required for subvector inference. For example, b10 = 0.
         logging (pathlib.Path, str or False) – Path to sqlite3 file (which typically has
             the file extension .db. If the file does not exist, it will be created. The
             dashboard can only be used when logging is used.
@@ -78,12 +80,18 @@ def check_msm_identification(
             "Standard error is NA for some of the estimated parameters. Cannot proceed."
         )
 
+    if (
+        cutoff is None or bandwidth is None
+    ) and n_obs is None:  # require n_obs for default bandwidth/cutoff
+        raise ValueError("Cannot calculate default cutoff or bandwidth without n_obs.")
+
     msm_params = msm_res.params["value"]  # estimated coefficient vector
-    n_params = len(msm_params)  # number of estimated parameters
+    n_params = len(msm_params)  # dimention of estimated parameter
 
     # calculate default inputs
     if bandwidth is None:
         bandwidth = math.sqrt(2 * math.log(math.log(n_obs)) / n_obs)  # for step 2.i)
+        # in the paper code: without sqrt, in the paper text: with sqrt
     if cutoff is None:
         cutoff = math.sqrt(2 * math.log(n_obs) / n_obs)  # for step 3.ii)
 
@@ -124,7 +132,8 @@ def sampling_level_sets(
     bandwidth,
     weights,
     sampling,
-    population_mc_kwgs=None,
+    population_mc_kwgs=None,  # not implemented
+    simulate_moments_kwargs=None,
 ):
     """Calculates the uniform draws over the level set required for the computation
     of the quasi-Jacobean. Uses either direct approach with random/pseudo-random
@@ -134,21 +143,33 @@ def sampling_level_sets(
     a sequence of proposal distributions with higher acceptance rate.
 
     Args:
-        simulate_moments
+        simulate_moments (callable) – Function that takes as inputs model parameters,
+            data and potentially other keyword arguments and returns a pytree with
+            simulated moments.  If the function returns a dict containing the key
+            "simulated_moments" we only use the value corresponding to that key. Other
+            entries are stored in the log database if you use logging.
         msm_res (dict) – The output of ``estimate_msm`` including estimated
-        parameters and standard errors.
-        moments_cov
-        draws (float) - Number of initial draws for sampling.
+            parameters and standard errors.
+        moments_cov (pandas.DataFrame): A block-pytree containing the covariance
+            matrix of the empirical moments. This is typically calculated with
+            our ``get_moments_cov`` function.
+        draws (float)  - The number of draws for sampling on level sets. Supposed to be
+            sufficiently large.
         bandwidth (float) - By default is calculated in the form of sqrt(2log(log[n])/n).
             Required for the selection of subsets for levels sets.
-        weights
+        weights (str) – One of “diagonal” (default), “identity” or “optimal”.  Note that
+            “optimal” refers to the asymptotically optimal weighting matrix and is often
+            not a good choice due to large finite sample bias.
         sampling (str) - Methods of sampling uniformly from likelihood level sets.
             One of the available options for direct approach using "random",
             "sobol" or "halton" sequence or adaptive sampling by "population_mc".
         population_mc_kwgs (dict): Further tuning parameters for adaptive sampling.
+        simulate_moments_kwargs (dict) – Additional keyword arguments for simulate_moments
+            with, for example, data on dependent and independent variables from the model
+            specification.
 
     Returns:
-        The selected draws, simulated moments and variance.
+        The selected draws and simulated moments.
 
     """
     msm_params = msm_res.params["value"]
@@ -167,7 +188,7 @@ def sampling_level_sets(
         elif sampling == "sobol":
             sequences = qmc.Sobol(
                 d=n_params, scramble=True
-            )  # d - dimension - number of estimated parameters
+            )  # d - dimension - dimension of estimated parameter
             sequences = sequences.random(
                 n=draws
             )  # instead of n=B try power of 2 (for Sobol sequence)
@@ -236,9 +257,9 @@ def calculate_quasi_jacobian(grid_sub, moms_sub, n_params):
     when the model is points and locally identified.
 
     Args:
-        grid_sub (list): The selected draws.
+        grid_sub (array): The parameter values for selected draws.
         moms_sub (array): Simulated moments for the selected draws.
-        n_params (int): Number of parameters in the model.
+        n_params (int): Dimension of the estimated parameter.
 
     Returns:
         The quasi-Jacobean matrix and the inverse square root variance matrix.
@@ -293,16 +314,15 @@ def category_selection(moments_cov, n_params, Bn, phi, cutoff):
     Selects the number of singular values larger than cutoff value.
 
     Args:
-        moments_cov (array): An array containing the covariance matrix of
-            the empirical moments. This is typically calculated with
+        moments_cov (pandas.DataFrame): A block-pytree containing the covariance
+            matrix of the empirical moments. This is typically calculated with
             our ``get_moments_cov`` function.
-        n_params (int): Number of parameters in the model.
+        n_params (int): Dimension of the estimated parameter.
         Bn (array): Quasi-Jacobean matrix which is calculated with
             ``calculate_quasi_jacobian``.
         phi (array): Inverse square root variance matrix which is calculated
             with``calculate_quasi_jacobian``.
-        cutoff (int): The cutoff for the identification category
-        selection. By default, calculated as sqrt(2*math.log(n)/n).
+        cutoff (int): The cutoff for the identification category selection.
 
     Returns:
         The singular values for normalized quasi-Jacobean, the cutoff and
